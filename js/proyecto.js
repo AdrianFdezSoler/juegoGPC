@@ -360,7 +360,7 @@ function setupCarProperties() {
         map: textures.body, // Solo usar textura básica del coche
         shininess: 80,
         specular: 0x333333,
-        color: 0xeeeeee // Color ligeramente más tenue
+        color: 0xeeeeee
       });
     }
   });
@@ -368,7 +368,7 @@ function setupCarProperties() {
   // Crear faros del coche
   setupCarHeadlights();
   
-  // Añadir luz puntual sobre el coche para mejor visibilidad (reducida)
+  // Añadir luz puntual sobre el coche
   const carTopLight = new THREE.PointLight(0xffffff, 0.3, 15);
   carTopLight.position.set(0, 2, 0);
   car.add(carTopLight);
