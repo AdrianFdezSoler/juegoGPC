@@ -4,7 +4,7 @@ var leftHeadlight, rightHeadlight;
 var trackCurve, centerlinePoints = [], trackMesh;
 var trackWidth = 18;
 var carSpeed = 0;
-var maxSpeed = 1.2;
+var maxSpeed = 1;
 var acceleration = 0.15;
 var deceleration = 0.008;
 var keys = { forward: false, backward: false, left: false, right: false };
@@ -90,7 +90,6 @@ function setupCamera() {
   camera = new THREE.PerspectiveCamera(60, aspectRatio, 0.1, 500);
   camera.position.set(0, 10, -10);
   camera.lookAt(0, 0, 0);
-
 }
 
 function createCircuit() {
@@ -259,11 +258,10 @@ function createTrackMaterial() {
   return new THREE.MeshPhongMaterial({ 
     map: roadTexture,
     shininess: 20,
-    specular: 0x222222
   });
 }
 
-// Agregar marcas de línea central y elementos visuales
+// Agregar marcas de línea central
 function addTrackMarkings() {
   const dashGeometry = new THREE.PlaneGeometry(0.4, 3);
   const dashMaterial = new THREE.MeshBasicMaterial({ color: 0xFFFFFF });
@@ -343,7 +341,6 @@ function setupCarProperties() {
   car.scale.set(1.2, 1.2, 1.2);
   car.castShadow = true;
 
-  // Cargar solo la textura básica del coche
   const textureLoader = new THREE.TextureLoader();
   const textures = {
     body: textureLoader.load('models/2010-porsche-918-spyder/textures/2010_porsche_918_spyder_ext_basalt_black.etc_5.png')
@@ -360,7 +357,6 @@ function setupCarProperties() {
         map: textures.body, // Solo usar textura básica del coche
         shininess: 80,
         specular: 0x333333,
-        color: 0xeeeeee
       });
     }
   });
@@ -417,6 +413,107 @@ function setupLights() {
   
   const ambientLight = new THREE.AmbientLight(0x404080, 0.3);
   scene.add(ambientLight);
+}
+
+function createForest() {
+  const loader = new THREE.GLTFLoader();
+  const treePath = 'models/tree.glb';
+
+  loader.load(
+    treePath,
+    (gltf) => {
+      const meshGroups = new Map();
+
+      gltf.scene.traverse((child) => {
+        if (child.isMesh) {
+          const matKey = child.material.uuid;
+          if (!meshGroups.has(matKey)) {
+            meshGroups.set(matKey, { material: child.material, geometries: [] });
+          }
+          const entry = meshGroups.get(matKey);
+          const geom = child.geometry.clone();
+          geom.applyMatrix4(child.matrixWorld);
+          entry.geometries.push(geom);
+        }
+      });
+
+      if (meshGroups.size === 0) {
+        console.error("No se encontró malla válida en el modelo del árbol");
+        return;
+      }
+
+
+      const spacing = 17;
+      const treesPerSide = 1;
+      const lateralMin = trackWidth * 0.7 + 4;
+      const lateralMax = trackWidth * 1.1 + 13;
+      const matrices = [];
+
+      const up = new THREE.Vector3(0, 1, 0);
+      const tangent = new THREE.Vector3();
+      const lateral = new THREE.Vector3();
+      const pos = new THREE.Vector3();
+      const quat = new THREE.Quaternion();
+      const scaleVec = new THREE.Vector3();
+      const mat = new THREE.Matrix4();
+
+      const steps = Math.floor(centerlinePoints.length / spacing);
+      const maxTrees = 85;
+      let treeCount = 0;
+
+      for (let s = 0; s < steps && treeCount < maxTrees; s++) {
+        const i = Math.floor(s * spacing + Math.random() * spacing * 0.5);
+        if (i >= centerlinePoints.length) continue;
+        const point = centerlinePoints[i];
+        tangent.copy(trackCurve.getTangent(i / centerlinePoints.length));
+        lateral.crossVectors(up, tangent).normalize();
+
+        for (let side = -1; side <= 1; side += 2) {
+          if (treeCount >= maxTrees) break;
+          for (let t = 0; t < treesPerSide; t++) {
+            const offset = lateralMin + Math.random() * (lateralMax - lateralMin) + Math.random() * 2;
+            const along = (Math.random() - 0.5) * spacing * 1.2;
+
+            pos.copy(point);
+            pos.addScaledVector(lateral, offset * side);
+            if (i + along >= 0 && i + along < centerlinePoints.length) {
+              pos.addScaledVector(
+                trackCurve.getTangent((i + along) / centerlinePoints.length),
+                along
+              );
+            }
+
+            if (!isInsideTrack(pos)) {
+              const scale = 0.45 + Math.random() * 0.18;
+              quat.setFromAxisAngle(up, Math.random() * Math.PI * 2);
+              scaleVec.set(scale, scale * (0.9 + Math.random() * 0.25), scale);
+              mat.compose(pos, quat, scaleVec);
+              matrices.push(mat.clone());
+              treeCount++;
+            }
+          }
+        }
+      }
+
+      console.log(`Total árboles generados: ${matrices.length}`);
+
+      meshGroups.forEach(({ material, geometries }) => {
+        const mergedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries(geometries, false);
+        const instanced = new THREE.InstancedMesh(mergedGeometry, material, matrices.length);
+
+        instanced.castShadow = true;
+        instanced.receiveShadow = true;
+
+        for (let i = 0; i < matrices.length; i++) {
+          instanced.setMatrixAt(i, matrices[i]);
+        }
+        instanced.instanceMatrix.needsUpdate = true;
+        scene.add(instanced);
+      });
+    },
+    undefined,
+    (error) => console.error('Error al cargar el árbol:', error)
+  );
 }
 
 function setupKeyboardControls() {
@@ -529,6 +626,7 @@ function updateCarPosition() {
     carHasMoved = true;
   }
 }
+
 function updateCameraSystem() {
   const cameraOffset = new THREE.Vector3(0, 5, -5);
   cameraOffset.applyMatrix4(new THREE.Matrix4().makeRotationY(car.rotation.y));
@@ -648,6 +746,7 @@ function createMinimap() {
   let minX = Infinity, maxX = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
   
+  // Calcular los límites del circuito
   centerlinePoints.forEach(point => {
     minX = Math.min(minX, point.x);
     maxX = Math.max(maxX, point.x);
@@ -669,12 +768,8 @@ function createMinimap() {
     -size, size, size, -size, 0.1, 1000
   );
   
-  // Configuración para vista cenital (desde arriba mirando hacia abajo)
   minimapCamera.position.set((minX + maxX) / 2, 200, (minZ + maxZ) / 2);
   minimapCamera.lookAt((minX + maxX) / 2, 0, (minZ + maxZ) / 2);
-  
-  // Rotar la cámara para que el norte esté arriba
-  minimapCamera.up.set(0, 0, -1); // Cambiar el vector "arriba" de la cámara
 }
 
 function updateTimer() {
@@ -763,14 +858,6 @@ function restartRace() {
     const dz = next.z - start.z;
     car.rotation.y = Math.atan2(dx, dz);
   }
-
-
-}
-
-function continueDriving() {
-  gameState = 'running';
-  controlsEnabled = true;
-  document.getElementById('finishPopup').classList.add('hidden');
 }
 
 function render() {
@@ -789,106 +876,6 @@ function animate() {
   }
 }
 
-function createForest() {
-  const loader = new THREE.GLTFLoader();
-  const treePath = 'models/tree.glb';
-
-  loader.load(
-    treePath,
-    (gltf) => {
-      const meshGroups = new Map();
-
-      gltf.scene.traverse((child) => {
-        if (child.isMesh) {
-          const matKey = child.material.uuid;
-          if (!meshGroups.has(matKey)) {
-            meshGroups.set(matKey, { material: child.material, geometries: [] });
-          }
-          const entry = meshGroups.get(matKey);
-          const geom = child.geometry.clone();
-          geom.applyMatrix4(child.matrixWorld);
-          entry.geometries.push(geom);
-        }
-      });
-
-      if (meshGroups.size === 0) {
-        console.error("No se encontró malla válida en el modelo del árbol");
-        return;
-      }
-
-
-  const spacing = 17;
-  const treesPerSide = 1;
-  const lateralMin = trackWidth * 0.7 + 4;
-  const lateralMax = trackWidth * 1.1 + 13;
-  const matrices = [];
-
-      const up = new THREE.Vector3(0, 1, 0);
-      const tangent = new THREE.Vector3();
-      const lateral = new THREE.Vector3();
-      const pos = new THREE.Vector3();
-      const quat = new THREE.Quaternion();
-      const scaleVec = new THREE.Vector3();
-      const mat = new THREE.Matrix4();
-
-  const steps = Math.floor(centerlinePoints.length / spacing);
-  const maxTrees = 85;
-  let treeCount = 0;
-
-      for (let s = 0; s < steps && treeCount < maxTrees; s++) {
-        const i = Math.floor(s * spacing + Math.random() * spacing * 0.5);
-        if (i >= centerlinePoints.length) continue;
-        const point = centerlinePoints[i];
-        tangent.copy(trackCurve.getTangent(i / centerlinePoints.length));
-        lateral.crossVectors(up, tangent).normalize();
-
-        for (let side = -1; side <= 1; side += 2) {
-          if (treeCount >= maxTrees) break;
-          for (let t = 0; t < treesPerSide; t++) {
-            const offset = lateralMin + Math.random() * (lateralMax - lateralMin) + Math.random() * 2;
-            const along = (Math.random() - 0.5) * spacing * 1.2;
-
-            pos.copy(point);
-            pos.addScaledVector(lateral, offset * side);
-            if (i + along >= 0 && i + along < centerlinePoints.length) {
-              pos.addScaledVector(
-                trackCurve.getTangent((i + along) / centerlinePoints.length),
-                along
-              );
-            }
-
-            if (!isInsideTrack(pos)) {
-              const scale = 0.45 + Math.random() * 0.18;
-              quat.setFromAxisAngle(up, Math.random() * Math.PI * 2);
-              scaleVec.set(scale, scale * (0.9 + Math.random() * 0.25), scale);
-              mat.compose(pos, quat, scaleVec);
-              matrices.push(mat.clone());
-              treeCount++;
-            }
-          }
-        }
-      }
-
-      console.log(`Total árboles generados: ${matrices.length}`);
-
-      meshGroups.forEach(({ material, geometries }) => {
-        const mergedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries(geometries, false);
-        const instanced = new THREE.InstancedMesh(mergedGeometry, material, matrices.length);
-
-        instanced.castShadow = true;
-        instanced.receiveShadow = true;
-
-        for (let i = 0; i < matrices.length; i++) {
-          instanced.setMatrixAt(i, matrices[i]);
-        }
-        instanced.instanceMatrix.needsUpdate = true;
-        scene.add(instanced);
-      });
-    },
-    undefined,
-    (error) => console.error('Error al cargar el árbol:', error)
-  );
-}
 
 window.addEventListener('resize', updateAspectRatio, false);
 
