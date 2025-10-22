@@ -4,7 +4,7 @@ var leftHeadlight, rightHeadlight;
 var trackCurve, centerlinePoints = [], trackMesh;
 var trackWidth = 18;
 var carSpeed = 0;
-var maxSpeed = 1.5;
+var maxSpeed = 1.2;
 var acceleration = 0.15;
 var deceleration = 0.008;
 var keys = { forward: false, backward: false, left: false, right: false };
